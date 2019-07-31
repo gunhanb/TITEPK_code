@@ -23,12 +23,6 @@ for TITE-PK methods.
 `tite_pk.stan` is the main **Stan** script
 which is used in `TITEPK_run.R` to implement the TITE-PK model.
 
-Session info
-============
-```{r, results='markup'} 
-sessionInfo()
-```
-
 
 
 Licence
