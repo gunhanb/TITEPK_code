@@ -295,16 +295,15 @@ matrix pk_1cmt_metabolite(vector lref, vector Dt, real lk1, real lk12, real lk20
  *  |               |
  * None            AUC_cmtE
  */
-// BELOW FUNCTION NOT CORRECT!!!
-//matrix pk_1cmt_eff_auc(vector lref, vector Dt, real lk1, real lke, real tau, int n) {
-//  int T = num_elements(Dt);
-//  matrix[T,3] lsystem = pk_1cmt_metabolite_depot(lref, Dt, lk1, lke, lke, tau, n);
-//  
-//  for(i in 1:T) {
-//    lsystem[i,3] = lsystem[i,3] - lke;
-//  }
-//  return(lsystem);
-//}
+matrix pk_1cmt_eff_auc(vector lref, vector Dt, real lk1, real lke, real tau, int n) {
+  int T = num_elements(Dt);
+  matrix[T,3] lsystem = pk_1cmt_metabolite_depot(lref, Dt, lk1, lke, lke, tau, n);
+  
+  for(i in 1:T) {
+    lsystem[i,3] = lsystem[i,3] - lke;
+  }
+  return(lsystem);
+}
 
 // calculates PK metrics, for now only SS concentration (per unit of dose administered)
 vector pk_1cmt_metabolite_metrics(real tau, real lk1, real lk12, real lk20) {

@@ -1,5 +1,10 @@
 /*
- * Using PK Stan library
+  A time-to-event pharmacokinetic modeel for
+  phase I dose-escalation trials
+  
+  TITE-PK One Parameter model
+  Authors: Burak Kuersad Guenhan and Sebastian Weber
+ 
  */
 
 functions {
@@ -639,16 +644,15 @@ matrix pk_1cmt_metabolite(vector lref, vector Dt, real lk1, real lk12, real lk20
  *  |               |
  * None            AUC_cmtE
  */
-// BELOW FUNCTION NOT CORRECT!!!
-//matrix pk_1cmt_eff_auc(vector lref, vector Dt, real lk1, real lke, real tau, int n) {
-//  int T = num_elements(Dt);
-//  matrix[T,3] lsystem = pk_1cmt_metabolite_depot(lref, Dt, lk1, lke, lke, tau, n);
-//  
-//  for(i in 1:T) {
-//    lsystem[i,3] = lsystem[i,3] - lke;
-//  }
-//  return(lsystem);
-//}
+matrix pk_1cmt_eff_auc(vector lref, vector Dt, real lk1, real lke, real tau, int n) {
+  int T = num_elements(Dt);
+  matrix[T,3] lsystem = pk_1cmt_metabolite_depot(lref, Dt, lk1, lke, lke, tau, n);
+  
+  for(i in 1:T) {
+    lsystem[i,3] = lsystem[i,3] - lke;
+  }
+  return(lsystem);
+}
 
 // calculates PK metrics, for now only SS concentration (per unit of dose administered)
 vector pk_1cmt_metabolite_metrics(real tau, real lk1, real lk12, real lk20) {
@@ -1006,8 +1010,8 @@ vector evaluate_model_nm_cmt(int[] id, vector time, int[] cmt, int[] evid, vecto
   matrix pk_system(vector lref, vector Dt, vector theta, real[] x_r, int[] x_i) {
     // as we are using an effect cmt, the in and out rate into the
     // effct cmt must be equal, hence k12=k20
-    return(pk_1cmt_metabolite_depot(lref[1:3], Dt, theta[1], theta[2], theta[2], 0, 0));
-    //return(pk_1cmt_eff_auc(lref[1:3], Dt, theta[1], theta[2], 0, 0));
+    //return(pk_1cmt_metabolite_depot(lref[1:3], Dt, theta[1], theta[2], theta[2], 0, 0));
+    return(pk_1cmt_eff_auc(lref[1:3], Dt, theta[1], theta[2], 0, 0));
 
   }
 
@@ -1037,8 +1041,8 @@ vector evaluate_model_nm_cmt(int[] id, vector time, int[] cmt, int[] evid, vecto
         reject("All requested times must be past the last dosing addl event.");
       }
     */
-    lstate_mdose = pk_1cmt_metabolite_depot(lref_mdose[1:3], Dt - tau * n, theta[1], theta[2], theta[2], tau, n+1);
-//    lstate_mdose = pk_1cmt_eff_auc(lref_mdose[1:3], Dt - tau * n, theta[1], theta[2], tau, n+1);
+//    lstate_mdose = pk_1cmt_metabolite_depot(lref_mdose[1:3], Dt - tau * n, theta[1], theta[2], theta[2], tau, n+1);
+    lstate_mdose = pk_1cmt_eff_auc(lref_mdose[1:3], Dt - tau * n, theta[1], theta[2], tau, n+1);
     
     
     for(s in 1:S)
@@ -1046,6 +1050,7 @@ vector evaluate_model_nm_cmt(int[] id, vector time, int[] cmt, int[] evid, vecto
         lstate[t,s] = log_sum_exp(lstate_mdose[t,s], lstate[t,s]);
     return(lstate);
   }
+
 
   /*
    * used to calculate the standardized cmt values
@@ -1081,27 +1086,91 @@ vector evaluate_model_nm_cmt(int[] id, vector time, int[] cmt, int[] evid, vecto
 
 
 data {
-  // reference time point (in months) 
+
+// NM data block declaration
+int<lower = 1> N; // number of lines of nm data set
+vector<lower=0>[N] time;
+vector<lower=0>[N] amt;
+int<lower=0> cmt[N];
+int<lower=0, upper=1> mdv[N];
+int<lower=0, upper=2> evid[N];
+int<lower=1, upper=N> id[N];
+int<lower=0> addl[N];
+vector<lower=0>[N] tau;
+  int<lower=0, upper=1> dv[N]; // observations, 1 = DLT, 0 = censoring for mdv == 0 records
+
+  // length of cyce 1 (in months) 
   real<lower=0> tref_month;
 
-  // log of pk parameters (1 is T_e half elimination rate, 2 is for k_e)
+  // log of PK parameters (First element is half elimination rate (Te), 2 is for k_e)
   vector[2] theta;
-
+  
+  // Specifying refernce regimen (reference dose and frequency (tau))
   real<lower=0> ref_dose;
   real<lower=0> ref_tau;
-  // Number of provisional regimens
-  int Nregimens;
-  // Provisional regimens
+  // Provisional regimens (NONMEM-style arguments)
+  int Nregimens;                   // number of provisional regimens    
   vector[Nregimens] regimens_lamt; // log(amt)
   vector[Nregimens] regimens_tau;  // frequencies
   int<lower=0> addls[Nregimens];
   // parameter for the prior distribution (logbeta)
   vector[2] params_prior;
 }
+
 transformed data {
-  real x_r[0];
-  int x_i[0];
-   // ref scalings which are calculated using the reference
+
+// standard NM dosing declarations
+int D = count_elem(evid, 1);
+int O = count_elem(mdv,  0);
+int J = rle_elem_count(id);
+int cid[N] = rep_each(seq_int(1, J), rle_int(id));
+
+int dose_ind[D] = which_elem(evid, 1);
+int dose_M[J] = rle_int(id[dose_ind]);
+vector[D] dose_time = time[dose_ind];
+vector[D] dose_tau = tau[dose_ind];
+int dose_addl[D] = addl[dose_ind];
+vector[D] dose_lamt = log(amt[dose_ind]);
+int dose_cmt[D] = cmt[dose_ind];
+
+// standard NM defs for observations
+int obs_ind[O]  = which_elem(mdv , 0);
+int obs_M[J] = rle_int(id[obs_ind]);
+vector[O] obs_time = time[obs_ind];
+int obs_cmt[O] = cmt[obs_ind];
+
+// define an index vector pointing to the first entry of each subject,
+// used for baseline covariates
+int first_ind[J] = make_slice_index(rle_int(id))[1:J];
+
+int obs_time_rank[O] = find_interval_blocked(obs_M, obs_time, dose_M, dose_time);
+int obs_dose_given[O] = count_dose_given_blocked(obs_M, obs_time, dose_M, dose_time, dose_tau, dose_addl);
+
+int dose_next_obs[D] = count_obs_event_free_blocked(obs_M, obs_time_rank, dose_M);
+real x_r[0];
+int x_i[0];
+  vector[J] K;
+  int Nobs = count_elem(cmt, 10);
+  int Ncens = count_elem(cmt, 11);
+  // pk concentrations/AUC at the events
+  vector[Nobs] lpk;
+  vector[Nobs] lpk_auc;
+  vector[Nobs] time_obs;
+  vector[Nobs] ltime_obs;
+  int cid_obs[Nobs];
+  int ind_obs[Nobs];
+  // auc's needed for censoring
+  vector[Ncens] lauc;
+  vector[Ncens] time_cens;
+  vector[Ncens] ltime_cens;
+  int ind_cens[Ncens];
+  // cumulative number of events time-point per subject
+  vector[Nobs] Nev;
+  vector[J] Ntot;
+  real time_unit;
+  real ltime_unit;
+  real ltref;
+  // ref scalings which are calculated using the reference
   // regimen. The scaling is chosen such that at the reference
   // time-point the AUC is equal to 1.
   // Calculating ref_lscale (Rescaling factor)
@@ -1121,24 +1190,13 @@ transformed data {
   vector[1] obs_time_tref;
   matrix[1,3] lauc_tref[Nregimens];
   vector[Nregimens] laucs_tref;
-  real time_unit;
-
   
-  // we use month as time unit; time is given as h
+    // we use month as time unit; time is given as h
   time_unit = 24.*7.*4.;
   obs_time_tref = rep_vector(time_unit * tref_month, 1);
+  ltime_unit = log(time_unit);
 
-//  {
-  // Calculating ref_lscale
-//  ref_lscale = to_vector(pk_model(dose_lamt_ref, dose_cmt_tref, dose_time_tref, dose_tau_ref, dose_addl_ref,
-//                         init_lstate_tref, init_time_tref, obs_time_tref, 
-//                         theta, 
-//                         lscale,
-//                         x_r, 
-//                         x_i));
-//  }
-//  print("ref_lscale    = ", ref_lscale);
-// Code from Sebastian
+
 {
   // Calculating ref_lscale
     ref_lscale = to_vector(pk_model(dose_lamt_ref, dose_cmt_tref, dose_time_tref, dose_tau_ref, dose_addl_ref,
@@ -1148,20 +1206,107 @@ transformed data {
                                     x_r, 
                                     x_i));
 
-    //ref_lscale[2] = ref_lscale[3] - theta[2];
-    //ref_lscale[1] = ref_lscale[3] - theta[2];
-    //ref_lscale[3] = ref_lscale[3];
   }
-  print("ref_lscale    = ", ref_lscale);
+  //print("ref_lscale    = ", ref_lscale);
 
 
+// Initialize data structures from NM input data
+
+// check that id vector is labelled from 1...J subsequently, but only
+// warn the user about it as he then needs to use the cid vector
+check_ids(id);
+
+// these two checks are obsolete as the assignment in the nm_defs file
+// will simply fail
+if(J != rle_elem_count(id[dose_ind]))
+  reject("Some patient(s) have no dosing event at all!");
+
+if(J != rle_elem_count(id[obs_ind]))
+  reject("Some patient(s) have no observation at all!");
+
+// check that we have no overlapping doses due to addl coding
+check_addl_dosing_blocked(dose_M, dose_time, dose_tau, dose_addl);
+
+  if(Ncens != J)
+    reject("Censoring times must be given for all J patients!");
+
+  K = rep_vector(0, J);
+
+  ind_obs  = which_elem(cmt, 10);
+  ind_cens = which_elem(cmt, 11);
+
+  // subject id for each observation; taken from the continuously
+  // labelled ID set
+  cid_obs = cid[ind_obs];
+  
+  // added for the case when no event observed
+  if(Nobs > 0)
+  {
+    int cur_j;
+    cur_j = cid_obs[1];
+    Nev = rep_vector(1.0, Nobs);
+    Ntot = rep_vector(0.0, J);
+    Ntot[cur_j] = 1;
+    for(o in 2:Nobs) {
+      if(cid_obs[o] == cur_j) {
+	Nev[o] = Nev[o-1] + 1;
+	Ntot[cur_j] = Nev[o];
+      } else {
+	cur_j = cid_obs[o];
+	Ntot[cur_j] = 1;
+      }
+    }
+  }
+  //print("Nev    = ", Nev);
+  //print("id_obs = ", id[ind_obs]);
+  //print("cid_obs = ", cid_obs);
+  //print("Ntot   = ", Ntot);
+  print("Total events = ", sum(Ntot));
+  //print("Nobs    = ", Nobs);
+  //print("Patient number =", J);
+
+
+
+  // censoring times (log), converted to month
+  time_cens  = time[ind_cens] / time_unit;
+  ltime_cens = log(time[ind_cens]) - ltime_unit;
+  time_obs = time[ind_obs] / time_unit;
+  ltime_obs = log(time[ind_obs]) - ltime_unit;
+
+  ltref = log(tref_month);
+
+  //print("theta[1:2] = ", theta[1:2]);
+
+  // calculate PK metrics (the time-varying exposure metric covariate)
+  {
+    matrix[O,3] lpk_all;
+    matrix[J,3] Init_lstate = rep_matrix(-25, J, 3);
+    vector[J]   init_time   = rep_vector(0, J);
+    int obs_ind_ev[Nobs]    = which_elem(cmt[obs_ind], 10);
+    int obs_ind_cens[Ncens] = which_elem(cmt[obs_ind], 11);
+
+    lpk_all = evaluate_model_fast(dose_M, dose_lamt, dose_cmt, dose_time, dose_tau, dose_addl, dose_next_obs,
+                                   Init_lstate, init_time,
+                                   obs_M, obs_time, obs_time_rank, obs_dose_given,
+                                   rep_matrix(to_row_vector(theta), J),
+                                   rep_matrix(to_row_vector(ref_lscale), J),
+                                   x_r,
+                                   x_i);
+
+    // split concentration records from those only used to get the
+    // AUC_inf and assign appropiate columns to output arrays
+    lpk = col(subset_matrix(lpk_all, obs_ind_ev), 2);
+    lpk_auc = col(subset_matrix(lpk_all, obs_ind_ev), 3);
+    lauc  = col(subset_matrix(lpk_all, obs_ind_cens), 3);
+  }
+  
   // Calculate End-of-cycle-1 log(AUC) to calculate DLT rate of each dose
    for(i in 1:Nregimens) {  
      dose_lamt_tref[i] = rep_vector(regimens_lamt[i], 1);
      dose_tau_tref[i] = rep_vector(regimens_tau[i], 1);
    }
-  print("dose_lamt_tref = ", dose_lamt_tref);
-  print("dose_tau_tref = ", dose_tau_tref);
+  //print("dose_lamt_tref = ", dose_lamt_tref);
+  //print("dose_tau_tref = ", dose_tau_tref);
 
   {
    for(i in 1:Nregimens) {
@@ -1178,31 +1323,51 @@ transformed data {
   // Log AUC values for calculating dose specific DLT rates
   for(i in 1:Nregimens)
     laucs_tref[i] = lauc_tref[i, 1, 3];
-  print("laucs_tref = ", laucs_tref);
+  //print("laucs_tref = ", laucs_tref);
+
+
+}
+parameters {
+  real logbeta;
+}
+transformed parameters {
+  real<lower=0, upper=1> P_ref;      // End-of-cycle-1 DLT rate of reference regimen
+  real lH_ref;                       // End-of-cycle-1 Log cumulative hazard of reference regimen
+  vector[Nobs] lh;
+  vector[J] lHc;
+
+  // note: 1-F(T>t_ref) = 1-exp(-Href) = Pref
+  // => log(Href) = log(-log(1-Pref)) = cloglog(Pref)
+  lH_ref = logbeta;
+  P_ref = inv_cloglog(lH_ref);
+
+  // calculate log hazard per observation
+  for(o in 1:Nobs) lh[o] = logbeta + lpk[o];
+
+  // calculate log(H(t)) at censoring times per subject
+  for(j in 1:J) lHc[j] = logbeta + lauc[j];
 
 }
 
 model {
+
+  // Putting prior on logbeta
+  logbeta  ~ normal(params_prior[1], params_prior[2]);
+
+  // add in terms of the log-lik
+  // log-hazard per event
+  target += lh;
+  // per subject censoring, i.e. F(t_ev > t_c); F=exp(-H(t))
+  target += -exp(lHc);
 }
 
 generated quantities {
-  real logbeta_prior;
-  real lH_ref;
-  real<lower=0, upper=1> P_ref;
   vector[Nregimens] P_dose;
   matrix[Nregimens,3] P_cat;
-    
-  logbeta_prior = normal_rng(params_prior[1], params_prior[2]);
-
-  // note: 1-F(T>t_ref) = 1-exp(-Href) = Pref
-  // => log(Href) = log(-log(1-Pref)) = cloglog(Pref)
-  //lH_dose_ref = log(-log1m(P_dose_ref));
-  lH_ref = logbeta_prior;
-  P_ref = inv_cloglog(lH_ref);
-  
+ 
   // The log of cumulative hazard of dose 30 at the end of first cycle
   for(i in 1:Nregimens) 
-    P_dose[i] = inv_cloglog(logbeta_prior + laucs_tref[i]); 
+    P_dose[i] = inv_cloglog(logbeta + laucs_tref[i]); 
 
   // calculating Posterior interval probabilities
   for (i in 1:Nregimens) {
@@ -1210,4 +1375,5 @@ generated quantities {
     P_cat[i,2] = step(0.33 - P_dose[i]) - step(0.16 - P_dose[i]); 
     P_cat[i,3] = step(1 - P_dose[i]) - step(0.33 - P_dose[i]);
   }
-}  
+
+}

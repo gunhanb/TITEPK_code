@@ -94,10 +94,10 @@ if(FALSE) {
     simulate_patient_cached(data, pk_fun1, pk_fun2, lalpha_coef, lbeta_coef, leta, cache=FALSE)
 }
 
-
 ## key simulation function. The function does a piece-wise linear
 ## approximation of the cumulative hazard H(t) prior to simulating.
-simulate_patient <- function(data, pk_fun, lbeta_coef, leta, cache=FALSE) {
+simulate_patient <- function(data, pk_fun, lbeta_coef, leta, cache=FALSE,
+                             theta, lscale) {
   ##cache <- FALSE
   time_cens <- data$time[data$dv==1 & data$mdv==0]
   #time_cens <- data$time[data$dv==0 & data$mdv==0]
@@ -112,7 +112,7 @@ simulate_patient <- function(data, pk_fun, lbeta_coef, leta, cache=FALSE) {
   }
   
   if(!is.null(sim_hist)) {
-    cat("Using cached lH for patient", j, "...\n")
+    ##cat("Using cached lH for patient", j, "...\n")
     lauc_fn <- sim_hist$lauc_fn
   } else {
     cat("Calculating lH for patient", j, "...\n")
@@ -128,23 +128,30 @@ simulate_patient <- function(data, pk_fun, lbeta_coef, leta, cache=FALSE) {
     ##dt <- 7*24
     dt <- 24/2
     time_grid <- seq(0, time_cens + dt, by=dt)
-    lpk <- pk_subject(time_grid, pk_fun, dosing)
+    #lpk <- pk_subject(time_grid, pk_fun, dosing)
+    
+    dosing <- subset(dosing, evid==1 & mdv==1 & lamt > -30)
+    names(dosing) <- paste("dose", names(dosing), sep="_")
+    f <- c("dose_lamt", "dose_cmt", "dose_time", "dose_tau", "dose_addl")
+    dosing <- dosing[,f]
+    lpk = do.call(pk_fun, c(dosing, list(obs_time=time_grid, init_time=0, init_lstate=rep(-35, 3), x_r=c(0), x_i=c(0L),
+                                         theta=theta, lscale=lscale)))
     
     ## find knots which approximate well the AUC of each drug
     f1 <- exp(lpk[,3,drop=FALSE])
     df1 <- c(diff(f1), Inf)/2
     knots1 <- find_knots(time_grid, f1, df1)
-
-    lauc_fn <- approxfun(time_grid[knots1], lpk[knots1, 3 , drop=FALSE], rule=2)
-
+    
+    lauc_fn <- approxfun(time_grid[knots1], lpk[knots1,c(3), drop=FALSE], rule=2)
+    
     if(cache) {
       cat("Knots reduction:", mean(knots1), " / ")
-      sim_cache[[jc]] <<- list(lauc_fn = lauc_fn)
+      sim_cache[[jc]] <<- list(lauc_fn=lauc_fn)
     }
   }
   
   lbeta_coef_j <- lbeta_coef
-
+  
   Hfun <- function(time) {
     time_month <- time / (24*7*4)
     exp(lbeta_coef_j + lauc_fn(time))
@@ -156,37 +163,37 @@ simulate_patient <- function(data, pk_fun, lbeta_coef, leta, cache=FALSE) {
   ## get a random 0-1 number
   u <- runif(1)
   l1mu <- log1p(-u) ## log(1-u)
-    
-    ## log-space calculation
+  
+  ## log-space calculation
   F_shifted <- function(x) { l1mu + Hfun(x) - H_ref }
-    ## linear-space calulation
-    ##F_shifted <- function(x) { u - ( 1-exp(-(Hfun(x) - H_ref)) ) }
-    ## version for gradient based minimization (not as robust as root-finding, but faster)
-    ##F_shifted_sq <- function(x) { (u - ( 1-exp(-(Hfun(x) - H_ref)) ))^2 }
-    
-    ## invert F such that F(t_ev) == u
+  ## linear-space calulation
+  ##F_shifted <- function(x) { u - ( 1-exp(-(Hfun(x) - H_ref)) ) }
+  ## version for gradient based minimization (not as robust as root-finding, but faster)
+  ##F_shifted_sq <- function(x) { (u - ( 1-exp(-(Hfun(x) - H_ref)) ))^2 }
+  
+  ## invert F such that F(t_ev) == u
   left <- l1mu
   right <- F_shifted(time_cens)
-    
+  
   if(left * right < 0){
-      ##t_ev <- optimize(F_shifted_sq, c(t0, time_cens))$minimum
-      t_ev <- uniroot(F_shifted, c(t0, time_cens), f.lower=left, f.upper=right, tol=0.001 )$root
-
-      
-  } else {
-      t_ev <- 2*time_cens
-  }
+    ##t_ev <- optimize(F_shifted_sq, c(t0, time_cens))$minimum
+    t_ev <- uniroot(F_shifted, c(t0, time_cens), f.lower=left, f.upper=right, tol=0.001 )$root
     
+    
+  } else {
+    t_ev <- 2*time_cens
+  }
+  
   if(t_ev < time_cens) {
-      ##cat("Registering event for patient", j, "at", t_ev, "\n")
-      events <- c(events, t_ev)
-      ## set t0 to current event & update reference lH
-      H_ref <- Hfun(t_ev)
+    ##cat("Registering event for patient", j, "at", t_ev, "\n")
+    events <- c(events, t_ev)
+    ## set t0 to current event & update reference lH
+    H_ref <- Hfun(t_ev)
   } else {
-      ##cat("Event is past censoring time", t_ev, ">", time_cens, "\n")
+    ##cat("Event is past censoring time", t_ev, ">", time_cens, "\n")
   }
-    
-
+  
+  
   res <- data.frame(time = time_cens, dv = 0)
   if(length(events) > 0) {
     res <- rbind(data.frame(time=events, dv=1), data.frame(time=events, dv=0))
@@ -199,9 +206,9 @@ cloglog <- binomial(link="cloglog")$linkfun
 inv_cloglog <- binomial(link="cloglog")$linkinv
 
 convert <- function(Pref) {
-    lHref   <- cloglog(Pref)
-    beta    <- lHref 
-    list(beta = beta)
+  lHref   <- cloglog(Pref)
+  beta    <- lHref 
+  list(beta = beta)
 }
 
 

@@ -27,8 +27,8 @@ swapData <- function(ggPl) function(newData) ggPl %+% newData
 
 ## numerically stable summation of logs on the natural scale
 log_sum_exp <- function(x){ 
-   xmax <- which.max(x) 
-   log1p(sum(exp(x[-xmax]-x[xmax])))+x[xmax] 
+    xmax <- which.max(x) 
+    log1p(sum(exp(x[-xmax]-x[xmax])))+x[xmax] 
 } 
 
 log_softmax <- function(gamma) gamma - log_sum_exp(gamma)
@@ -108,13 +108,13 @@ pk_subject <- function(time, pk_fun, dosing, ...) {
     ## is called with an id column = 1, all needed dosing events, a
     ## respective evid column and an out vector which is marked 1 for
     ## the times requested
-
+    
     dosing <- subset(dosing, evid==1 & mdv==1 & lamt > -30)
     
     names(dosing) <- paste("dose", names(dosing), sep="_")
-
+    
     f <- c("dose_lamt", "dose_cmt", "dose_time", "dose_tau", "dose_addl")
     dosing <- dosing[,f]
-
+    
     do.call(pk_fun, c(dosing, list(obs_time=time, init_time=0, init_lstate=rep(-35, 3), x_r=c(0), x_i=c(0L), ...)))
 }
